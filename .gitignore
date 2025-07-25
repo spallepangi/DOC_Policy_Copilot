@@ -40,8 +40,8 @@ ENV/
 env.bak/
 venv.bak/
 
-# Data files
-data/policies/*.pdf
+# Data files - allow PDFs for Streamlit Cloud deployment
+# data/policies/*.pdf  # Commented out to allow PDF files in GitHub
 index/faiss_index/*
 
 # Jupyter Notebook
