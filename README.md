@@ -197,7 +197,3 @@ python main.py
 - Verify chunking produces meaningful segments
 - Validate citation accuracy
 - Check response quality with different question types
-
-## License
-
-This project is designed for internal use with Missouri Department of Corrections policy documents. Ensure compliance with relevant data handling and privacy policies.
