@@ -58,18 +58,6 @@ st.markdown("""
         background: linear-gradient(135deg, #f1f8e9 0%, #dcedc8 100%);
         border-left: 5px solid #4caf50;
     }
-    .source-item {
-        background-color: #f5f5f5;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-radius: 8px;
-        border-left: 4px solid #ff9800;
-        transition: all 0.3s ease;
-    }
-    .source-item:hover {
-        background-color: #eeeeee;
-        transform: translateX(5px);
-    }
     .metric-card {
         background: white;
         padding: 1rem;
@@ -105,17 +93,6 @@ def save_uploaded_file(uploaded_file, destination_folder: str) -> str:
     
     return file_path
 
-def display_sources(sources: List[dict]):
-    """Display source information in a formatted way."""
-    if not sources:
-        return
-    
-    st.markdown("### 📚 Sources")
-    for i, source in enumerate(sources, 1):
-        with st.expander(f"Source {i}: {source['filename']} (Page {source['page_number']})"):
-            st.markdown(f"**File:** {source['filename']}")
-            st.markdown(f"**Page:** {source['page_number']}")
-            st.markdown(f"**Similarity Score:** {source['similarity_score']}")
 
 def main():
     # Header with enhanced styling
@@ -125,7 +102,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; margin-bottom: 2rem; color: #666;'>
         <h3>AI-Powered Assistant for Missouri Department of Corrections Policies</h3>
-        <p>Ask questions about DOC policies and get accurate answers with source citations</p>
+        <p>Ask questions about DOC policies and get clear, easy-to-understand answers</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -191,7 +168,7 @@ def main():
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.markdown("̣## 💬 Ask Questions About DOC Policies")
+        st.markdown("## 💬 Ask Questions About DOC Policies")
         
         # Initialize session state for chat history
         if 'chat_history' not in st.session_state:
@@ -245,7 +222,7 @@ def main():
         
         # Display chat history with enhanced styling
         if st.session_state.chat_history:
-            st.markdown("̣## 💭 Conversation History")
+            st.markdown("## 💭 Conversation History")
             
             for i, message in enumerate(reversed(st.session_state.chat_history[-10:])):  # Show last 10 messages
                 if message["type"] == "user":
@@ -275,17 +252,13 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # Display sources
-                    if result["sources"]:
-                        display_sources(result["sources"])
-                    
                     # Add separator
                     if i < len(st.session_state.chat_history) - 1:
                         st.markdown("---")
     
     with col2:
         # Tips section
-        st.markdown("̣## 💡 Tips for Better Answers")
+        st.markdown("## 💡 Tips for Better Answers")
         st.markdown("""
         - **Be specific** in your questions
         - Ask about **procedures and guidelines**
@@ -294,7 +267,7 @@ def main():
         """)
         
         # Sample questions section
-        st.markdown("̣## 🎯 Sample Questions")
+        st.markdown("## 🎯 Sample Questions")
         sample_questions = [
             "What are the visiting hours and procedures?",
             "How are disciplinary actions handled?",
