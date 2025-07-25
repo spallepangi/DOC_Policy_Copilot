@@ -33,7 +33,7 @@
 1. **Go to your Streamlit Cloud dashboard**
 2. **Configure Environment Variable**:
    - In your app settings, add environment variable: `GEMINI_API_KEY`
-   - Set the value to your actual Gemini API key: `[REDACTED_API_KEY]`
+   - Set the value to your actual Gemini API key (get it from: https://makersuite.google.com/app/apikey)
 3. **Deploy/Restart the app**
 4. **The app should now work perfectly!**
 
