@@ -1,19 +1,27 @@
-# Environment and API keys - NEVER COMMIT THESE
+# --------------------------------------
+# 🔐 Environment & Secrets – Do NOT Commit
+# --------------------------------------
 .env
-.streamlit/secrets.toml
 .env.*
+.streamlit/secrets.toml
 config.py
 secrets.py
 
-# Allow .env.example template (safe to commit)
+# Allow safe env templates
 !.env.example
 
-# Python
+# --------------------------------------
+# 🐍 Python Artifacts
+# --------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# --------------------------------------
+# 📦 Build Artifacts
+# --------------------------------------
 build/
 develop-eggs/
 dist/
@@ -33,31 +41,41 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Virtual environments
+# --------------------------------------
+# 📁 Virtual Environments
+# --------------------------------------
 venv/
 env/
 ENV/
 env.bak/
 venv.bak/
 
-# Data files
+# --------------------------------------
+# 📊 Data Files – PDFs & FAISS Indexes
+# --------------------------------------
 data/policies/*.pdf
 index/faiss_index/*
+!data/policies/.gitkeep
+!index/faiss_index/.gitkeep
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# --------------------------------------
+# 📓 Jupyter Notebook Caches
+# --------------------------------------
+.ipynb_checkpoints/
 
-# IDEs
+# --------------------------------------
+# 💻 IDEs & Editors
+# --------------------------------------
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
+# --------------------------------------
+# 🧹 OS & Temp Files
+# --------------------------------------
 .DS_Store
 Thumbs.db
-
-# Temporary files
 *.tmp
 *.temp
 *.log

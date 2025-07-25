@@ -78,11 +78,13 @@ class RAGPipeline:
                 folder_path = os.path.dirname(pdf_path)
                 filename = os.path.basename(pdf_path)
                 
-                # Temporarily move file to data folder if not already there
-                if folder_path != self.data_folder:
+                # Only copy if the file is not already in the data folder
+                if folder_path != os.path.abspath(self.data_folder):
                     import shutil
                     dest_path = os.path.join(self.data_folder, filename)
-                    shutil.copy2(pdf_path, dest_path)
+                    # Check if destination file already exists and is the same
+                    if not os.path.exists(dest_path) or not os.path.samefile(pdf_path, dest_path):
+                        shutil.copy2(pdf_path, dest_path)
                 
                 # Load the document
                 docs = load_pdf_files(self.data_folder)
