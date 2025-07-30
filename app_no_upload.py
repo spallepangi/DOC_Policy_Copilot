@@ -233,41 +233,36 @@ def main():
         
         # Display chat history with enhanced styling
         if st.session_state.chat_history:
-            st.markdown("## 💭 Conversation History")
+            st.markdown("## 💬 Conversation")
             
-            for i, message in enumerate(reversed(st.session_state.chat_history[-10:])):  # Show last 10 messages
-                if message["type"] == "user":
+            # Iterate through the history and display messages chronologically
+            for message in st.session_state.chat_history:
+                if message.get('type') == 'user':
                     st.markdown(f"""
                     <div class="chat-message user-message">
                         <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
                             <strong>🙋‍♂️ You asked:</strong>
                             <small style="margin-left: auto; color: #666;">
-                                {time.strftime('%H:%M', time.localtime(message['timestamp']))}
+                                {time.strftime('%H:%M', time.localtime(message.get('timestamp', 0)))}
                             </small>
                         </div>
-                        <div>{message["content"]}</div>
+                        <div>{message.get('content', '')}</div>
                     </div>
                     """, unsafe_allow_html=True)
-                
-                elif message["type"] == "bot":
-                    result = message["content"]
+                elif message.get('type') == 'bot':
+                    result = message.get('content', {})
+                    answer = result.get('answer', 'No answer available') if isinstance(result, dict) else str(result)
                     st.markdown(f"""
                     <div class="chat-message bot-message">
                         <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
-                            <strong>🏛️ Missouri DOC Policy Copilot:</strong>
+                            <strong>🏛️ Answer:</strong>
                             <small style="margin-left: auto; color: #666;">
-                                {time.strftime('%H:%M', time.localtime(message['timestamp']))}
+                                {time.strftime('%H:%M', time.localtime(message.get('timestamp', 0)))}
                             </small>
                         </div>
-                        <div>{result["answer"]}</div>
+                        <div>{answer}</div>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    # Sources no longer displayed to users
-                    
-                    # Add separator
-                    if i < len(st.session_state.chat_history) - 1:
-                        st.markdown("---")
     
     with col2:
         # Tips section
