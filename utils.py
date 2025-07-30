@@ -2,6 +2,9 @@ import fitz  # PyMuPDF
 import os
 from typing import List, Dict, Any
 import re
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+import config
 
 
 def load_pdf_files(folder_path: str) -> List[Dict[str, Any]]:
@@ -48,56 +51,72 @@ def load_pdf_files(folder_path: str) -> List[Dict[str, Any]]:
     return documents
 
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+def chunk_text(text: str, chunk_size: int = None, overlap: int = None) -> List[str]:
     """
-    Split text into chunks with specified size and overlap.
+    Split text into chunks using LangChain's RecursiveCharacterTextSplitter.
     
     Args:
         text (str): Text to be chunked
-        chunk_size (int): Approximate number of tokens per chunk
-        overlap (int): Number of tokens to overlap between chunks
+        chunk_size (int): Approximate number of characters per chunk (defaults to config)
+        overlap (int): Number of characters to overlap between chunks (defaults to config)
         
     Returns:
         List[str]: List of text chunks
     """
-    # Simple tokenization by splitting on whitespace
-    words = text.split()
+    # Use config defaults if not provided
+    if chunk_size is None:
+        chunk_size = config.CHUNK_SIZE * 4  # Approximate chars per token
+    if overlap is None:
+        overlap = config.CHUNK_OVERLAP * 4  # Approximate chars per token
     
-    if len(words) <= chunk_size:
-        return [text]
+    # Initialize the text splitter with semantic separators
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        length_function=len,
+        separators=[
+            "\n\n",  # Paragraphs
+            "\n",    # Lines
+            ". ",    # Sentences
+            "! ",    # Exclamatory sentences
+            "? ",    # Questions
+            "; ",    # Semicolons
+            ", ",    # Commas
+            " ",     # Words
+            "",      # Characters
+        ]
+    )
     
-    chunks = []
-    start = 0
-    
-    while start < len(words):
-        end = min(start + chunk_size, len(words))
-        chunk = ' '.join(words[start:end])
-        chunks.append(chunk)
-        
-        if end >= len(words):
-            break
-            
-        start = end - overlap
-    
+    chunks = text_splitter.split_text(text)
     return chunks
 
 
-def chunk_documents(documents: List[Dict[str, Any]], chunk_size: int = 500, overlap: int = 50) -> List[Dict[str, Any]]:
+def chunk_documents(documents: List[Dict[str, Any]], chunk_size: int = None, overlap: int = None) -> List[Dict[str, Any]]:
     """
-    Chunk all documents into smaller pieces while preserving metadata.
+    Chunk all documents into smaller pieces while preserving metadata using LangChain's RecursiveCharacterTextSplitter.
     
     Args:
         documents (List[Dict]): List of documents with text and metadata
-        chunk_size (int): Approximate number of tokens per chunk
-        overlap (int): Number of tokens to overlap between chunks
+        chunk_size (int): Approximate number of tokens per chunk (defaults to config)
+        overlap (int): Number of tokens to overlap between chunks (defaults to config)
         
     Returns:
         List[Dict]: List of chunked documents with metadata
     """
+    # Use config defaults if not provided
+    if chunk_size is None:
+        chunk_size = config.CHUNK_SIZE
+    if overlap is None:
+        overlap = config.CHUNK_OVERLAP
+    
     chunked_docs = []
     
     for doc in documents:
-        text_chunks = chunk_text(doc['text'], chunk_size, overlap)
+        # Convert token-based sizes to character-based for the text splitter
+        char_chunk_size = chunk_size * 4  # Approximate chars per token
+        char_overlap = overlap * 4  # Approximate chars per token
+        
+        text_chunks = chunk_text(doc['text'], char_chunk_size, char_overlap)
         
         for i, chunk in enumerate(text_chunks):
             chunked_doc = {

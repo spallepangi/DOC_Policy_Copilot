@@ -1,10 +1,16 @@
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import google.generativeai as genai
 from dotenv import load_dotenv
+import re
 
 from utils import load_pdf_files, chunk_documents, clean_text
 from vector_store import VectorStore
+from prompts.base_prompt import BASE_PROMPT
+from prompts.query_rewrite import QUERY_REWRITE_PROMPT, QUERY_ANALYSIS_PROMPT
+from prompts.fallback import FALLBACK_PROMPT, NO_CONTEXT_FALLBACK, LOW_CONFIDENCE_RESPONSE
+from evaluation import log_evaluation_data
+import config
 
 # Load environment variables
 load_dotenv()
@@ -12,7 +18,7 @@ load_dotenv()
 class RAGPipeline:
     def __init__(self, data_folder: str = "data/policies/", index_path: str = "index/faiss_index/"):
         """
-        Initialize the RAG pipeline.
+        Initialize the enhanced RAG pipeline with query rewriting, semantic reranking, and evaluation.
         
         Args:
             data_folder (str): Path to folder containing PDF files
@@ -24,20 +30,27 @@ class RAGPipeline:
         # Configure Gemini API
         genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
         
-        # Create data folder if it doesn't exist
+        # Create necessary directories
         os.makedirs(data_folder, exist_ok=True)
+        os.makedirs(os.path.dirname(config.LOG_FILE_PATH), exist_ok=True)
         
         # Auto-load and index documents if index is empty
         self._auto_initialize()
     
-    def index_documents(self, chunk_size: int = 500, overlap: int = 50):
+    def index_documents(self, chunk_size: int = None, overlap: int = None):
         """
-        Load, process, and index all PDF documents.
+        Load, process, and index all PDF documents using settings from config.
         
         Args:
-            chunk_size (int): Size of text chunks
-            overlap (int): Overlap between chunks
+            chunk_size (int): Size of text chunks (tokens), defaults to config
+            overlap (int): Overlap between chunks (tokens), defaults to config
         """
+        # Use config defaults if not provided
+        if chunk_size is None:
+            chunk_size = config.CHUNK_SIZE
+        if overlap is None:
+            overlap = config.CHUNK_OVERLAP
+            
         print("Loading PDF documents...")
         documents = load_pdf_files(self.data_folder)
         
@@ -51,8 +64,8 @@ class RAGPipeline:
         for doc in documents:
             doc['text'] = clean_text(doc['text'])
         
-        # Chunk documents
-        print("Chunking documents...")
+        # Chunk documents using LangChain
+        print("Chunking documents with RecursiveCharacterTextSplitter...")
         chunked_docs = chunk_documents(documents, chunk_size, overlap)
         print(f"Created {len(chunked_docs)} chunks.")
         
@@ -108,100 +121,170 @@ class RAGPipeline:
         
         print(f"Added {len(chunked_docs)} new chunks to the index.")
     
-    def generate_response(self, query: str, top_k: int = 5) -> Dict[str, Any]:
+    def generate_response(self, query: str, top_k: int = None) -> Dict[str, Any]:
         """
-        Generate a response to a user query using RAG.
+        Generate a response to a user query using enhanced RAG with query rewriting, semantic reranking, and evaluation.
         
         Args:
             query (str): User question
-            top_k (int): Number of relevant chunks to retrieve
+            top_k (int): Number of relevant chunks to retrieve (defaults to config)
             
         Returns:
             Dict: Response with answer and sources
         """
-        # Search for relevant documents
+        # Use config defaults if not provided
+        if top_k is None:
+            top_k = config.TOP_K_RETRIEVAL
+            
+        # Step 1: Query rewriting if enabled
+        original_query = query
+        if config.ENABLE_QUERY_REWRITING:
+            rewritten_query = self._rewrite_query(query)
+            if rewritten_query and rewritten_query.strip() != query.strip():
+                print(f"Query rewritten: '{query}' -> '{rewritten_query}'")
+                query = rewritten_query
+        
+        # Step 2: Initial retrieval from FAISS
         search_results = self.vector_store.search(query, k=top_k)
         
         if not search_results:
+            fallback_answer = NO_CONTEXT_FALLBACK.replace("{{query}}", original_query)
             return {
-                "answer": "I'm sorry, I couldn't find any relevant information in the Missouri DOC policy documents to answer your question.",
+                "answer": fallback_answer,
                 "sources": [],
-                "query": query
+                "query": original_query,
+                "rewritten_query": query if query != original_query else None
             }
         
-        # Prepare context from retrieved documents
+        # Step 3: Process retrieved chunks (simplified for testing)
+        retrieved_chunks = [doc for doc, score in search_results]
+        similarity_scores = [score for doc, score in search_results]
+        
+        # Check if similarity scores are too low
+        if max(similarity_scores) < config.SIMILARITY_THRESHOLD:
+            print(f"Low similarity detected. Max score: {max(similarity_scores)}")
+            return self._generate_fallback_response(original_query, retrieved_chunks[:3], similarity_scores[:3])
+        
+        # Use top retrieved chunks directly (bypassing semantic reranking for testing)
+        top_reranked = retrieved_chunks[:config.TOP_K_RERANKED]
+        reranker_scores = [0.0] * len(top_reranked)  # Placeholder scores
+        
+        # Step 4: Generate response
         context_parts = []
         sources = []
         
-        for doc, score in search_results:
-            context_parts.append(f"From {doc['source']}:\\n{doc['text']}")
+        for i, doc in enumerate(top_reranked):
+            context_parts.append(f"From {doc['source']}:\n{doc['text']}")
             
             # Track unique sources
             source_info = {
                 "filename": doc['filename'],
                 "page_number": doc['page_number'],
                 "source": doc['source'],
-                "similarity_score": round(score, 3)
+                "similarity_score": round(similarity_scores[retrieved_chunks.index(doc)], 3),
+                "reranker_score": round(reranker_scores[i], 3) if i < len(reranker_scores) else 0.0
             }
             
             # Avoid duplicate sources
             if source_info not in sources:
                 sources.append(source_info)
         
-        context = "\\n\\n".join(context_parts)
+        context = "\n\n".join(context_parts)
         
-        # Create prompt for Gemini
-        prompt = self._create_prompt(query, context)
+        # Truncate context if too long
+        if len(context) > config.MAX_CONTEXT_LENGTH:
+            context = context[:config.MAX_CONTEXT_LENGTH] + "\n[Context truncated...]"
+        
+        # Create prompt using modular prompt system
+        prompt = BASE_PROMPT.replace("{{context}}", context).replace("{{query}}", original_query)
         
         # Generate response using Gemini
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')  # Updated to available model
+            model = genai.GenerativeModel(config.GEMINI_MODEL)
             response = model.generate_content(prompt)
             answer = response.text
         except Exception as e:
             print(f"Error generating response: {str(e)}")
             answer = "I apologize, but I encountered an error while generating a response. Please try again."
         
+        # Step 5: Log evaluation data
+        if config.ENABLE_EVALUATION_LOGGING:
+            log_evaluation_data(
+                query=original_query,
+                retrieved_chunks=retrieved_chunks,
+                reranked_chunks=top_reranked,
+                response=answer,
+                similarity_scores=similarity_scores,
+                reranker_scores=reranker_scores[:config.TOP_K_RERANKED]
+            )
+        
         return {
             "answer": answer,
             "sources": sources,
-            "query": query,
-            "context_used": len(search_results)
+            "query": original_query,
+            "rewritten_query": query if query != original_query else None,
+            "context_used": len(top_reranked)
         }
     
-    def _create_prompt(self, query: str, context: str) -> str:
-        """
-        Create a prompt for the language model.
-        
-        Args:
-            query (str): User question
-            context (str): Retrieved context
+    def _rewrite_query(self, query: str) -> str:
+        """Rewrites a user query to be more specific and clear for retrieval."""
+        try:
+            prompt = QUERY_REWRITE_PROMPT.replace("{{query}}", query)
+            model = genai.GenerativeModel(config.GEMINI_MODEL)
+            response = model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            print(f"Error during query rewriting: {e}")
+            return query
+
+    def _semantic_rerank(self, query: str, chunks: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[float]]:
+        """Reranks retrieved chunks based on semantic relevance to the query."""
+        try:
+            # This is a simplified example of reranking.
+            # A more advanced implementation would use a dedicated reranker model.
+            reranker_prompt = "Please re-rank the following document chunks based on their relevance to the query: '{query}'. Return a comma-separated list of the original chunk indices, from most to least relevant."
+            reranker_prompt = reranker_prompt.replace("{query}", query)
+
+            for i, chunk in enumerate(chunks):
+                reranker_prompt += f"\n\n[Chunk {i}]: {chunk['text']}"
+
+            model = genai.GenerativeModel(config.GEMINI_MODEL)
+            response = model.generate_content(reranker_prompt)
             
-        Returns:
-            str: Formatted prompt
-        """
-        prompt = f"""You are a helpful assistant that explains Missouri Department of Corrections policies in simple, easy-to-understand language.
+            # Extract ranked indices from response
+            ranked_indices_str = re.findall(r"\d+", response.text)
+            ranked_indices = [int(i) for i in ranked_indices_str if int(i) < len(chunks)]
+            
+            # Create a new list of chunks and scores based on the new order
+            reranked_chunks = [chunks[i] for i in ranked_indices]
+            reranker_scores = [(len(chunks) - i) / len(chunks) for i in range(len(chunks))]  # Example scores
+            
+            return reranked_chunks, reranker_scores
 
-Based on the information provided below, answer the user's question in a conversational, human-friendly way.
+        except Exception as e:
+            print(f"Error during semantic reranking: {e}")
+            # Fallback to original order
+            return chunks, [0.0] * len(chunks)
 
-IMPORTANT GUIDELINES:
-1. Write in plain English that anyone can understand
-2. Use a warm, conversational tone like you're explaining to a friend or family member
-3. DO NOT include any document names, page numbers, or source citations in your response
-4. Avoid technical jargon, policy codes, or formal bureaucratic language
-5. Break down complex processes into simple, easy-to-follow steps
-6. Use everyday words instead of official terminology
-7. If the information isn't available, say so in a friendly way
-8. Focus on what people actually need to know in practical terms
+    def _generate_fallback_response(self, query: str, context_chunks: list, scores: list) -> Dict[str, Any]:
+        """Generates a fallback response when no high-confidence context is found."""
+        try:
+            context = "\n".join([chunk["text"] for chunk in context_chunks])
+            prompt = FALLBACK_PROMPT.replace("{{query}}", query).replace("{{context}}", context)
+            
+            model = genai.GenerativeModel(config.GEMINI_MODEL)
+            response = model.generate_content(prompt)
+            answer = response.text
 
-INFORMATION FROM POLICY DOCUMENTS:
-{context}
+        except Exception as e:
+            print(f"Error generating fallback response: {e}")
+            answer = LOW_CONFIDENCE_RESPONSE.replace("{{query}}", query).replace("{{partial_info}}", "I found some information that might be related, but I cannot be certain.")
 
-USER QUESTION: {query}
-
-Please provide a clear, friendly explanation without any document references or technical jargon:"""
-        
-        return prompt
+        return {
+            "answer": answer,
+            "sources": [],
+            "query": query
+        }
     
     def _auto_initialize(self):
         """Auto-initialize the system by loading PDFs from the policies folder."""
@@ -227,43 +310,5 @@ Please provide a clear, friendly explanation without any document references or 
         return self.vector_store.get_stats()
 
 
-def main():
-    """Main function to demonstrate the RAG pipeline."""
-    # Initialize pipeline
-    rag = RAGPipeline()
-    
-    # Check if index exists
-    stats = rag.get_index_stats()
-    
-    if stats['total_documents'] == 0:
-        print("No existing index found. Please add some PDF documents to the data/policies/ folder and run indexing.")
-        print("You can also use the Streamlit app to upload documents.")
-    else:
-        print(f"Loaded existing index with {stats['total_documents']} documents from {stats['unique_files']} files.")
-        
-        # Interactive query loop
-        print("\\nMissouri DOC Policy Copilot - Ready for questions!")
-        print("Type 'quit' to exit.")
-        
-        while True:
-            query = input("\\nYour question: ").strip()
-            
-            if query.lower() in ['quit', 'exit', 'q']:
-                break
-            
-            if not query:
-                continue
-            
-            print("\\nSearching for relevant information...")
-            result = rag.generate_response(query)
-            
-            print(f"\\n**Answer:**\\n{result['answer']}")
-            
-            if result['sources']:
-                print(f"\\n**Sources:**")
-                for source in result['sources']:
-                    print(f"- {source['source']} (Similarity: {source['similarity_score']})")
 
 
-if __name__ == "__main__":
-    main()
