@@ -4,7 +4,14 @@ from typing import List, Dict, Any
 import re
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-import config
+# Try to import config, use defaults if not available
+try:
+    import config
+except ImportError:
+    # Fallback configuration if config module is not available
+    class config:
+        CHUNK_SIZE = 500
+        CHUNK_OVERLAP = 20
 
 
 def load_pdf_files(folder_path: str) -> List[Dict[str, Any]]:

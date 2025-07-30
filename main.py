@@ -10,7 +10,25 @@ from prompts.base_prompt import BASE_PROMPT
 from prompts.query_rewrite import QUERY_REWRITE_PROMPT, QUERY_ANALYSIS_PROMPT
 from prompts.fallback import FALLBACK_PROMPT, NO_CONTEXT_FALLBACK, LOW_CONFIDENCE_RESPONSE
 from evaluation import log_evaluation_data
-import config
+
+# Try to import config, use defaults if not available
+try:
+    import config
+except ImportError:
+    # Fallback configuration if config module is not available
+    class config:
+        CHUNK_SIZE = 500
+        CHUNK_OVERLAP = 20
+        TOP_K_RETRIEVAL = 10
+        TOP_K_RERANKED = 3
+        SIMILARITY_THRESHOLD = 0.3
+        ENABLE_QUERY_REWRITING = True
+        ENABLE_EVALUATION_LOGGING = True
+        LOG_FILE_PATH = "logs/rag_evaluation.log"
+        GEMINI_MODEL = "gemini-2.0-flash"
+        EMBEDDING_MODEL = "models/embedding-001"
+        MAX_CONTEXT_LENGTH = 4000
+        HALLUCINATION_DETECTION_THRESHOLD = 0.5
 
 # Load environment variables
 load_dotenv()

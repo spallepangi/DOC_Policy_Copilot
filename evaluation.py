@@ -5,20 +5,27 @@ import json
 from loguru import logger
 from datetime import datetime
 
-import config
-
-# Configure logger
-logger.add(
-    config.LOG_FILE_PATH,
-    level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
-    rotation="10 MB",
-    serialize=True  # Write logs as JSON
-)
+try:
+    import config
+    # Ensure logs directory exists
+    os.makedirs(os.path.dirname(config.LOG_FILE_PATH), exist_ok=True)
+    
+    # Configure logger
+    logger.add(
+        config.LOG_FILE_PATH,
+        level="INFO",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        rotation="10 MB",
+        serialize=True  # Write logs as JSON
+    )
+except ImportError:
+    # Fallback if config is not available
+    config = None
+    print("Warning: config module not found. Evaluation logging disabled.")
 
 def log_evaluation_data(query: str, retrieved_chunks: list, reranked_chunks: list, response: str, similarity_scores: list, reranker_scores: list):
     """Logs all relevant data for a single query-response cycle."""
-    if not config.ENABLE_EVALUATION_LOGGING:
+    if not config or not config.ENABLE_EVALUATION_LOGGING:
         return
 
     log_entry = {
@@ -47,6 +54,9 @@ def log_evaluation_data(query: str, retrieved_chunks: list, reranked_chunks: lis
 
 def check_for_hallucination(response: str, context_chunks: list) -> bool:
     """Checks for potential hallucinations by ensuring the response is grounded in the context."""
+    if not config:
+        return False  # Cannot detect hallucinations without config
+        
     # This is a simple heuristic. A more advanced approach would use an NLI model.
     response_tokens = set(response.lower().split())
     context_tokens = set()
