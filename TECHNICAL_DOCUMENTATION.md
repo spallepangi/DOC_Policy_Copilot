@@ -1,137 +1,217 @@
-# Technical Documentation: Missouri DOC Policy Copilot
 
-**Version:** 2.0
-**Last Updated:** 2025-07-30
+# Missouri DOC Policy Copilot: Technical Documentation
 
-## 1. Overview
+## 1. Project Overview
 
-The Missouri DOC Policy Copilot is an advanced AI-powered assistant designed to provide clear, accurate, and easy-to-understand answers to questions about the Missouri Department of Corrections (DOC) policies and procedures. It leverages a sophisticated Retrieval-Augmented Generation (RAG) pipeline, combining the retrieval power of a FAISS vector store with the generative capabilities of Google's Gemini large language models.
+The **Missouri DOC Policy Copilot** is an advanced Retrieval-Augmented Generation (RAG) chatbot designed to provide accurate, context-aware, and conversational answers to questions about the Missouri Department of Corrections (DOC) policy documents. 
 
-The system is built to be used by a wide audience, including inmates, their families, and the general public, and features a user-friendly interface built with Streamlit.
+Built with Python, Streamlit, and Google's Gemini Pro API, the application leverages a sophisticated RAG pipeline to understand user queries, retrieve relevant information from a specialized knowledge base of policy PDFs, and generate human-like responses grounded in the source material.
 
-### Key Features:
-- **Advanced RAG Pipeline**: Integrates query rewriting, semantic reranking, and modular prompts for high-quality responses.
-- **Gemini 2.0 Flash Integration**: Utilizes the latest Gemini model for fast and accurate response generation.
-- **Semantic Chunking**: Employs LangChain’s `RecursiveCharacterTextSplitter` to maintain the semantic integrity of policy documents.
-- **Interactive UI**: A simple and intuitive web interface powered by Streamlit.
-- **Evaluation and Logging**: A `loguru`-based module for detailed logging of RAG performance to flag hallucinations and analyze results.
-- **Configurability**: A central `config.py` file allows for easy tuning of all key parameters.
+**Core Features:**
+- **Automated Document Ingestion:** Automatically processes and indexes policy documents from a designated folder.
+- **Advanced RAG Pipeline:** Implements query rewriting, semantic chunking, and reranking to enhance retrieval accuracy and response quality.
+- **Gemini 2.0 Flash Integration:** Uses Google's `gemini-2.0-flash` model for generating high-quality embeddings and generating conversational responses.
+- **Conversational UI:** A user-friendly interface built with Streamlit allows for interactive querying and displays chat history in a clean, chronological format.
+- **Evaluation & Logging:** Captures key metrics for each interaction, including query details, retrieved chunks, and response quality, for continuous improvement.
+- **Ready for Deployment:** The application is containerized and configured for seamless deployment on platforms like Streamlit Cloud.
+
+---
 
 ## 2. System Architecture
 
-The system is composed of a backend RAG pipeline and a frontend Streamlit application. They interact to provide a seamless user experience.
+The application is built on a modular architecture that separates concerns, making it maintainable and scalable.
 
-```mermaid
-graph TD
-    subgraph User Interface (streamlit_app.py)
-        A[User Input] --> B{Streamlit App};
-        B --> C[Ask a Question];
-        C --> D{RAGPipeline.generate_response()};
-        D --> E[Display Response & Sources];
-    end
+**Key Components:**
 
-    subgraph Backend (main.py, vector_store.py, etc.)
-        F[PDF Policy Documents] --> G(Document Loader);
-        G --> H(Semantic Chunker);
-        H --> I(Embedding Generator);
-        I --> J[FAISS Vector Store];
-        
-        D -- RAG Pipeline --> K{Query Rewriter};
-        K --> L{Initial Retrieval};
-        L --> M{Semantic Reranker};
-        M --> N{Prompt Engine};
-        N --> O{Gemini 2.0 Flash};
-        O --> D;
+1.  **Frontend (Streamlit):** The `streamlit_app.py` script creates the web interface, manages user sessions and state, and orchestrates calls to the backend pipeline.
+2.  **Backend (RAG Pipeline):** The `main.py` script encapsulates the core RAG logic. It handles everything from loading data to generating the final answer.
+3.  **Vector Store (FAISS):** `vector_store.py` manages the FAISS index, which stores vector embeddings of the policy documents for efficient similarity searches.
+4.  **Utilities (`utils.py`):** Contains helper functions for loading PDFs, splitting text into semantic chunks, and cleaning text data.
+5.  **Configuration (`config.py`):** Centralizes model names, file paths, and other configuration parameters.
+6.  **Evaluation (`evaluation.py`):** Manages the logging of interactions to a CSV file for analysis.
+7.  **Knowledge Base (`/data/policies`):** The fixed directory containing all the Missouri DOC policy PDF files that form the chatbot's knowledge base.
 
-        L -- Retrieves from --> J;
-    end
+---
 
-    subgraph Logging (evaluation.py)
-        D -- Logs data --> P[Evaluation Logger];
-        P --> Q[rag_evaluation.log];
-    end
-```
+## 3. The RAG Pipeline Explained
 
-## 3. In-Depth RAG Pipeline Overview
+The heart of the Policy Copilot is its advanced RAG pipeline. This pipeline ensures that the answers generated by the LLM are not just fluent but also factually grounded in the provided policy documents.
 
-The RAG pipeline is the core of the system. It transforms user queries into accurate, context-aware answers based on the provided policy documents.
+### Step 1: Data Ingestion and Indexing (The "Retrieval" Foundation)
 
-### Step 1: Document Ingestion and Indexing (Offline Process)
-This process happens once or whenever new documents are added.
+This is a one-time setup process that prepares the knowledge base.
 
-1.  **Load Documents**: PDF files from the `data/policies/` directory are loaded using `PyMuPDF` (`fitz`) in `utils.py`.
-2.  **Pre-process Text**: The extracted text is cleaned to remove excessive whitespace and special characters (`clean_text` in `utils.py`).
-3.  **Semantic Chunking**: The text is split into smaller, semantically meaningful chunks using LangChain’s `RecursiveCharacterTextSplitter`. This splitter tries to break text on paragraphs, sentences, and other logical boundaries to keep related information together. Chunk size and overlap are configured in `config.py`.
-4.  **Generate Embeddings**: Each chunk is converted into a high-dimensional vector (embedding) using Google's `models/embedding-001` model. This is handled by the `generate_embeddings` method in `vector_store.py`.
-5.  **Index in FAISS**: The generated embeddings are stored in a FAISS (`IndexFlatIP`) index. FAISS allows for efficient similarity search. The index and its corresponding document metadata are saved to the `index/faiss_index/` directory, allowing the system to load a pre-built index on startup.
+- **Loading Documents:** The pipeline starts by loading all PDF files from the `data/policies/` directory using the `PyMuPDFLoader` in `utils.py`.
+- **Semantic Chunking:** Instead of arbitrarily splitting the text, `utils.py` uses a `RecursiveCharacterTextSplitter` from LangChain. This method divides the text into chunks based on semantic separators (paragraphs, lines, sentences), keeping related sentences together. This is more effective than fixed-size chunking because it preserves the context within each chunk.
+- **Generating Embeddings:** Each text chunk is converted into a numerical vector (an embedding) using the `GoogleGenerativeAIEmbeddings` model (`models/embedding-001`). These embeddings capture the semantic meaning of the text.
+- **Creating the FAISS Index:** The text chunks and their corresponding embeddings are stored in a FAISS (Facebook AI Similarity Search) index. FAISS is highly efficient for searching through millions of vectors. The created index is saved to disk (`index/faiss_index`) for quick loading in subsequent sessions.
 
-### Step 2: Query Processing and Response Generation (Online Process)
-This process occurs for every user query.
+This entire process is handled by the `add_new_documents` function in `main.py`.
 
-1.  **Query Rewriting**: When a user submits a query, it first goes through a Gemini-powered rewriting step (`_rewrite_query` in `main.py`). The `QUERY_REWRITE_PROMPT` instructs the model to make the query more specific and clear, adding relevant keywords. This significantly improves retrieval accuracy.
-    - *Example*: "what is leave policy?" -> "Missouri Department of Corrections employee leave policy, including annual leave, sick leave, family and medical leave (FMLA)..."
+### Step 2: Query Processing and Retrieval (Real-time)
 
-2.  **Initial Retrieval**: The (potentially rewritten) query is embedded, and the FAISS index is searched to retrieve the `TOP_K_RETRIEVAL` most similar document chunks.
+When a user asks a question, the following steps occur in real-time:
 
-3.  **Fallback for Low Similarity**: If the similarity scores of all retrieved chunks are below the `SIMILARITY_THRESHOLD` in `config.py`, the system assumes no relevant context was found and generates a helpful fallback message using the `LOW_CONFIDENCE_RESPONSE` prompt.
+**A. Query Rewriting**
 
-4.  **Semantic Reranking**: The retrieved chunks are then reranked using a Gemini prompt (`_semantic_rerank` in `main.py`). This step re-evaluates the chunks in the context of the specific query, improving the relevance of the final context. The top `TOP_K_RERANKED` chunks are selected.
+The initial user query might be short, ambiguous, or lack context. To improve retrieval, the pipeline first rewrites the query.
 
-5.  **Context Compilation**: The text from the top reranked chunks is compiled into a single context string to be passed to the language model.
+- **Function:** `_rewrite_query` in `main.py`.
+- **Process:** The original query is sent to the Gemini 2.0 Flash model with a specific prompt asking it to rephrase the question into a more detailed and context-rich version, suitable for a vector database search.
+- **Example:**
+    - **Original Query:** "What about inmate mail?"
+    - **Rewritten Query:** "What are the specific policies and procedures regarding incoming and outgoing mail for inmates, including regulations on content, inspection, and restricted items?"
 
-6.  **Prompt Engineering & Final Response**: The compiled context and the original user query are inserted into the `BASE_PROMPT`. This final prompt instructs the model on tone, style, and rules (e.g., to not use jargon and to cite sources). The prompt is sent to the `gemini-2.0-flash` model, which generates the final, user-facing answer.
+**B. Vector Search**
 
-7.  **Evaluation Logging**: The entire process—from the original query to the final answer, including all retrieved/reranked chunks and their scores—is logged to `logs/rag_evaluation.log`. This structured log is invaluable for debugging, analysis, and future fine-tuning.
+The rewritten query is embedded into a vector using the same Gemini model. The pipeline then searches the FAISS index for the text chunks with embeddings that are most similar to the query's embedding, using cosine similarity.
 
-## 4. Core Modules and Components
+- **Function:** `search` in `vector_store.py`.
+- **Output:** A list of the top `k` most relevant document chunks.
 
--   **`main.py`**: Orchestrates the entire RAG pipeline within the `RAGPipeline` class. It handles query rewriting, retrieval, reranking, and response generation.
--   **`streamlit_app.py`**: Provides the user interface. It initializes the `RAGPipeline`, captures user input, displays the response, and manages the chat history.
--   **`utils.py`**: Contains helper functions for loading PDFs, cleaning text, and chunking documents.
--   **`vector_store.py`**: The `VectorStore` class abstracts away the complexities of embedding generation and FAISS indexing.
--   **`evaluation.py`**: Manages the logging of evaluation data and includes a basic hallucination detection function.
--   **`config.py`**: A centralized file for all system parameters, making it easy to tune the pipeline's performance.
--   **`prompts/`**: A directory containing Python files for each of the modular prompts, separating prompt logic from the application code.
--   **`.env`**: Stores the `GEMINI_API_KEY` securely.
--   **`requirements.txt`**: Lists all Python dependencies for the project.
+**C. Semantic Reranking**
 
-## 5. Setup and Deployment
+A simple vector search might return chunks that are semantically close but not all equally relevant. Reranking adds a layer of refinement.
+
+- **Function:** `_semantic_rerank` in `main.py`.
+- **Process:** The retrieved chunks and the original query are passed to the Gemini 2.0 Flash model. The model re-evaluates the relevance of each chunk to the query and reorders them, pushing the most relevant ones to the top. This step is crucial for filtering out noise and focusing the LLM on the best possible context.
+
+### Step 3: Augmented Generation (The "Generation" Step)
+
+This is where the final answer is created.
+
+- **Function:** `generate_response` in `main.py`.
+- **Process:**
+    1.  The top-ranked, most relevant chunks of text are combined into a single block of context.
+    2.  A carefully crafted prompt is constructed. This prompt includes the original user question and the retrieved context.
+    3.  The prompt instructs the Gemini 2.0 Flash model to generate a conversational, helpful answer **based only on the provided context**. This final instruction is critical for preventing the model from "hallucinating" or using outside knowledge.
+- **Prompt Template Example:**
+    ```
+    You are an expert assistant specializing in the policies and procedures of the Missouri Department of Corrections (DOC). Your primary goal is to provide clear, accurate, and easy-to-understand explanations to a wide audience, including inmates, their families, and the general public. You must adhere to the following guidelines:
+
+    1.  **Tone and Style**: Maintain a professional, empathetic, and respectful tone. Avoid jargon, legalistic language, and overly complex sentences. Explain concepts as you would to someone unfamiliar with corrections policies.
+
+    2.  **Accuracy and Citation**: Base your answers *only* on the provided context. If the context does not contain the answer, explicitly state that the information is not available in the provided documents. At the end of your response, cite the source document and page number for each piece of information used.
+
+    3.  **Safety and Security**: Do not provide information that could compromise the safety or security of a correctional facility, staff, or inmates. If a query asks for such information, politely decline to answer.
+
+    4.  **Completeness**: Synthesize information from all relevant chunks to provide a comprehensive answer. If different documents provide conflicting information, point this out.
+
+    5.  **Formatting**: Use formatting (e.g., bullet points, bolding) to improve readability.
+
+    Here is the context to use for answering the user's query:
+
+    ---
+
+    {{context}}
+
+    ---
+
+    User Query: {{query}}
+    ```
+- **Output:** The final, grounded, and conversational answer that is displayed to the user.
+
+---
+
+## 4. Codebase Guide
+
+### `streamlit_app.py`
+This file creates the user interface.
+- **`main()`:** The entry point for the Streamlit app. It sets up the page title, sidebar, and session state.
+- **Session State (`st.session_state`):** Used to maintain the chat history and other variables across user interactions.
+- **Chat Display Logic:** It iterates through the `st.session_state.messages` list (which stores pairs of user questions and bot answers) and displays them in chronological order.
+- **Input Handling:** It captures the user's query from the input box and triggers the RAG pipeline by calling `rag.generate_response()`.
+
+### `main.py`
+The core logic of the RAG application.
+- **`RAGPipeline` Class:** An organizational class that holds the entire pipeline.
+- **`__init__()`:** Initializes the vector store, reranker, and evaluation logger. It calls `_auto_initialize()` to ensure the knowledge base is indexed.
+- **`index_documents()`:** Checks for new PDFs and indexes them. It avoids re-copying files to prevent errors in deployed environments.
+- **`generate_response()`:** The main method that executes the entire RAG chain for a given query: rewrite -> search -> rerank -> generate response.
+
+### `vector_store.py`
+Manages the FAISS vector store.
+- **`VectorStore` Class:** Handles creation, saving, loading, and searching of the FAISS index.
+- **`get_retriever()`:** Creates and returns a retriever object from the FAISS index, configured to find the top `k` similar documents.
+- **`search()`:** A convenience method that takes a query string and returns the retrieved document chunks.
+
+### `utils.py`
+Provides data loading and processing utilities.
+- **`load_pdf_files()`:** Scans the data directory and loads all PDF files using `PyMuPDFLoader`.
+- **`chunk_documents()`:** Takes loaded documents and uses the `RecursiveCharacterTextSplitter` to split them into meaningful pieces.
+- **`clean_text()`:** A placeholder for any text cleaning operations needed before embedding.
+
+### `evaluation.py`
+Handles logging for analysis and debugging.
+- **`EvaluationLogger` Class:** Provides methods to log different stages of the RAG pipeline.
+- **`log_evaluation_data()`:** Methods to create a new log entry for a query, update it with retrieved context and the final response, and save the complete log row to a CSV file (`logs/rag_evaluation.log`).
+
+---
+
+## 5. Setup and Usage
+
+### Prerequisites
+- Python 3.8+
+- Git
 
 ### Local Setup
-
-1.  **Clone the repository.**
-2.  **Install dependencies**: `pip install -r requirements.txt`
-3.  **Create `.env` file**: Create a `.env` file in the root directory and add your Gemini API key:
+1.  **Clone the Repository:**
+    ```bash
+    git clone <your-repo-url>
+    cd DOC_Policy_Copilot
     ```
-    GEMINI_API_KEY=YOUR_API_KEY_HERE
+2.  **Create a Virtual Environment:**
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
     ```
-4.  **Add PDF Documents**: Place your policy PDF files in the `data/policies/` directory.
-5.  **Run the application**: `streamlit run streamlit_app.py`
+3.  **Install Dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+4.  **Set Up Environment Variables:**
+    - Create a file named `.env` in the project root.
+    - Add your Gemini API key to it:
+      ```
+      GEMINI_API_KEY="your_api_key_here"
+      ```
+5.  **Add Policy Documents:**
+    - Place your Missouri DOC policy PDF files into the `data/policies/` directory.
 
-### Deployment (Streamlit Cloud)
+### Running the Application
+1.  **Launch the Streamlit App:**
+    ```bash
+    streamlit run streamlit_app.py
+    ```
+2.  Open your web browser and navigate to `http://localhost:8501`.
+3.  The first time you run it, the app will process and index the PDFs. This may take a few minutes. Subsequent runs will be much faster as they will load the pre-built index.
+4.  Start asking questions!
 
-1.  **Push to GitHub**: Ensure your repository is up-to-date on GitHub.
-2.  **Create a Streamlit Cloud App**: Connect your GitHub repository to Streamlit Cloud.
-3.  **Set Environment Variables**: In the Streamlit Cloud app settings, add `GEMINI_API_KEY` as a secret.
-4.  **Deploy**: The app will automatically build and deploy. The graceful import handling for `config.py` ensures the app will run even though the file is not in the repo.
+---
 
-## 6. Potential Future Upgrades
+## 6. Deployment on Streamlit Cloud
 
-The current system is powerful and robust, but it can be enhanced further:
+1.  **Push to GitHub:** Ensure your entire project, including the PDF files in `data/policies/`, is committed and pushed to a GitHub repository. Your `.gitignore` should NOT exclude the PDF files.
+2.  **Create a Streamlit Cloud Account:** Sign up or log in to [Streamlit Cloud](https://share.streamlit.io/).
+3.  **Deploy App:**
+    - Click "New app" and connect your GitHub account.
+    - Select the repository and the `main` branch.
+    - Ensure the "Main file path" is set to `streamlit_app.py`.
+4.  **Add Secrets:**
+    - In the app's advanced settings, go to the "Secrets" section.
+    - Add your Gemini API key as a secret. The key name must be `GEMINI_API_KEY`.
+    - **Secret format:**
+      ```toml
+      GEMINI_API_KEY="your_api_key_here"
+      ```
+5.  **Deploy:** Click "Deploy!". Streamlit will build and launch your application.
 
-1.  **Advanced Reranker**: Replace the current prompt-based reranker with a dedicated, more efficient reranker model like Cohere Rerank or a cross-encoder model for better performance.
+---
 
-2.  **Smarter Hallucination Detection**: Implement a more sophisticated hallucination detection system using Natural Language Inference (NLI) models to verify that every claim in the generated response is directly supported by the source context.
+## 7. Future Enhancements
 
-3.  **Conversational Memory**: Add a conversational memory module (e.g., `ConversationBufferMemory` in LangChain) to allow the assistant to remember previous turns in the conversation and answer follow-up questions more effectively.
-
-4.  **User Feedback Mechanism**: Add "thumbs up/down" buttons in the UI to collect user feedback on the quality of responses. This data can be logged and used to fine-tune the system.
-
-5.  **Automated Document Ingestion**: Create a script or a separate UI to automate the process of adding new documents, which would automatically trigger re-indexing.
-
-6.  **Hybrid Search**: Combine the current semantic search with traditional keyword-based search (e.g., BM25) to improve retrieval for queries that rely on specific codes or jargon.
-
-7.  **Analytics Dashboard**: Build a Streamlit or Dash dashboard to visualize the data from the `rag_evaluation.log` file, providing insights into query patterns, response quality, and potential areas for improvement.
-
-8.  **Support for More Document Types**: Extend the document loader to support other formats like `.docx`, `.html`, or even scrape content directly from web pages.
+- **Hybrid Search:** Combine keyword-based search (like BM25) with the existing vector search to improve retrieval for queries containing specific codes or acronyms.
+- **Advanced Agentic Behavior:** Implement a ReAct (Reasoning and Acting) agent that can break down complex, multi-step questions and perform multiple retrievals if necessary.
+- **Citation Support:** Modify the generation prompt to include citations (e.g., source document and page number) in the final answer to enhance transparency and trust.
+- **Feedback Mechanism:** Add "thumbs up/down" buttons in the UI to collect user feedback on answer quality, which can be used to fine-tune the models.
 
