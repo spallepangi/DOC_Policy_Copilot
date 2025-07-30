@@ -1,29 +1,33 @@
 import streamlit as st
 import os
-from typing import List
 import time
-from dotenv import load_dotenv
+from typing import List
 
-# Load environment variables
-load_dotenv()
+# Try to import with fallbacks
+try:
+    from main import RAGPipeline
+except ImportError as e:
+    st.error(f"Import error: {e}")
+    st.stop()
 
 # Check for API key
 if not os.getenv('GEMINI_API_KEY'):
     st.error("""
     ## 🔑 API Key Missing
     
-    Please configure your Gemini API key in the Streamlit Cloud environment variables:
+    Please set up your Gemini API key:
     
-    1. Go to your app settings in Streamlit Cloud
-    2. Add environment variable: `GEMINI_API_KEY`
-    3. Set the value to your actual API key
-    4. Get your API key from: https://makersuite.google.com/app/apikey
+    1. Copy `.env.example` to `.env`
+    2. Edit `.env` and add your Gemini API key
+    3. Get your API key from: https://makersuite.google.com/app/apikey
+    4. Restart the application
     
-    The app will automatically restart once the environment variable is set.
+    Your `.env` file should contain:
+    ```
+    GEMINI_API_KEY=your_actual_api_key_here
+    ```
     """)
     st.stop()
-
-from main import RAGPipeline
 
 # Page configuration
 st.set_page_config(
@@ -58,6 +62,18 @@ st.markdown("""
         background: linear-gradient(135deg, #f1f8e9 0%, #dcedc8 100%);
         border-left: 5px solid #4caf50;
     }
+    .source-item {
+        background-color: #f5f5f5;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 8px;
+        border-left: 4px solid #ff9800;
+        transition: all 0.3s ease;
+    }
+    .source-item:hover {
+        background-color: #eeeeee;
+        transform: translateX(5px);
+    }
     .metric-card {
         background: white;
         padding: 1rem;
@@ -81,18 +97,14 @@ st.markdown("""
 @st.cache_resource
 def initialize_rag_pipeline():
     """Initialize the RAG pipeline with caching."""
-    return RAGPipeline()
+    try:
+        return RAGPipeline()
+    except Exception as e:
+        st.error(f"Failed to initialize RAG pipeline: {str(e)}")
+        st.error("Please check your API key and dependencies.")
+        return None
 
-def save_uploaded_file(uploaded_file, destination_folder: str) -> str:
-    """Save uploaded file to destination folder."""
-    os.makedirs(destination_folder, exist_ok=True)
-    file_path = os.path.join(destination_folder, uploaded_file.name)
-    
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getvalue())
-    
-    return file_path
-
+# Sources display function removed - no longer showing sources to users
 
 def main():
     # Header with enhanced styling
@@ -102,7 +114,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; margin-bottom: 2rem; color: #666;'>
         <h3>AI-Powered Assistant for Missouri Department of Corrections Policies</h3>
-        <p>Ask questions about DOC policies and get clear, easy-to-understand answers</p>
+        <p>Ask questions about DOC policies and get accurate answers with source citations</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -143,8 +155,7 @@ def main():
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Refresh failed: {str(e)}")
-        
-        if st.button("🗑️ Clear Chat History", help="Clear conversation history", use_container_width=True):
+        if st.button("🗑️ Clear Chat History", help="Clear conversation history"):
             st.session_state.chat_history = []
             st.success("🧹 Chat history cleared!")
             st.rerun()
@@ -222,39 +233,36 @@ def main():
         
         # Display chat history with enhanced styling
         if st.session_state.chat_history:
-            st.markdown("## 💭 Conversation History")
+            st.markdown("## 💬 Conversation")
             
-            for i, message in enumerate(reversed(st.session_state.chat_history[-10:])):  # Show last 10 messages
-                if message["type"] == "user":
+            # Iterate through the history and display messages chronologically
+            for message in st.session_state.chat_history:
+                if message.get('type') == 'user':
                     st.markdown(f"""
                     <div class="chat-message user-message">
                         <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
                             <strong>🙋‍♂️ You asked:</strong>
                             <small style="margin-left: auto; color: #666;">
-                                {time.strftime('%H:%M', time.localtime(message['timestamp']))}
+                                {time.strftime('%H:%M', time.localtime(message.get('timestamp', 0)))}
                             </small>
                         </div>
-                        <div>{message["content"]}</div>
+                        <div>{message.get('content', '')}</div>
                     </div>
                     """, unsafe_allow_html=True)
-                
-                elif message["type"] == "bot":
-                    result = message["content"]
+                elif message.get('type') == 'bot':
+                    result = message.get('content', {})
+                    answer = result.get('answer', 'No answer available') if isinstance(result, dict) else str(result)
                     st.markdown(f"""
                     <div class="chat-message bot-message">
                         <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
-                            <strong>🏛️ Missouri DOC Policy Copilot:</strong>
+                            <strong>🏛️ Answer:</strong>
                             <small style="margin-left: auto; color: #666;">
-                                {time.strftime('%H:%M', time.localtime(message['timestamp']))}
+                                {time.strftime('%H:%M', time.localtime(message.get('timestamp', 0)))}
                             </small>
                         </div>
-                        <div>{result["answer"]}</div>
+                        <div>{answer}</div>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    # Add separator
-                    if i < len(st.session_state.chat_history) - 1:
-                        st.markdown("---")
     
     with col2:
         # Tips section
