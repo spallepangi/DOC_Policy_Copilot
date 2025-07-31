@@ -1,11 +1,13 @@
 import os
 from typing import List, Dict, Any, Tuple
+import cohere
+from utils import extract_images_from_pdf
 import google.generativeai as genai
 from dotenv import load_dotenv
 import re
 
 from utils import load_pdf_files, chunk_documents, clean_text
-from vector_store import VectorStore
+from vector_store_stable import StableVectorStore
 from prompts.base_prompt import BASE_PROMPT
 from prompts.query_rewrite import QUERY_REWRITE_PROMPT, QUERY_ANALYSIS_PROMPT
 from prompts.fallback import FALLBACK_PROMPT, NO_CONTEXT_FALLBACK, LOW_CONFIDENCE_RESPONSE
@@ -43,7 +45,7 @@ class RAGPipeline:
             index_path (str): Path to store FAISS index
         """
         self.data_folder = data_folder
-        self.vector_store = VectorStore(index_path)
+        self.vector_store = StableVectorStore(index_path)
         
         # Configure Gemini API
         genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
@@ -57,7 +59,7 @@ class RAGPipeline:
     
     def index_documents(self, chunk_size: int = None, overlap: int = None):
         """
-        Load, process, and index all PDF documents using settings from config.
+        Load, process, and index all PDF documents (text and images) using settings from config.
         
         Args:
             chunk_size (int): Size of text chunks (tokens), defaults to config
@@ -70,27 +72,41 @@ class RAGPipeline:
             overlap = config.CHUNK_OVERLAP
             
         print("Loading PDF documents...")
-        documents = load_pdf_files(self.data_folder)
+        text_documents = load_pdf_files(self.data_folder)
         
-        if not documents:
+        if not text_documents:
             print("No PDF documents found.")
             return
         
-        print(f"Loaded {len(documents)} pages from PDF files.")
+        print(f"Loaded {len(text_documents)} pages from PDF files.")
         
         # Clean text content
-        for doc in documents:
+        for doc in text_documents:
             doc['text'] = clean_text(doc['text'])
+            doc['type'] = 'text'  # Mark as text document
         
-        # Chunk documents using LangChain
-        print("Chunking documents with RecursiveCharacterTextSplitter...")
-        chunked_docs = chunk_documents(documents, chunk_size, overlap)
-        print(f"Created {len(chunked_docs)} chunks.")
+        # Chunk text documents using LangChain
+        print("Chunking text documents with RecursiveCharacterTextSplitter...")
+        chunked_text_docs = chunk_documents(text_documents, chunk_size, overlap)
+        for doc in chunked_text_docs:
+            doc['type'] = 'text'
+        print(f"Created {len(chunked_text_docs)} text chunks.")
         
-        # Create vector index
-        self.vector_store.create_index(chunked_docs)
+        # Extract images from PDFs
+        print("Extracting images from PDF documents...")
+        image_documents = extract_images_from_pdf(self.data_folder)
+        for doc in image_documents:
+            doc['type'] = 'image'  # Ensure type is set
+        print(f"Extracted {len(image_documents)} images.")
         
-        print("Document indexing completed!")
+        # Combine text and image documents
+        all_documents = chunked_text_docs + image_documents
+        print(f"Total documents to index: {len(all_documents)} ({len(chunked_text_docs)} text + {len(image_documents)} images)")
+        
+        # Create multimodal vector index
+        self.vector_store.create_index(all_documents)
+        
+        print("Multimodal document indexing completed!")
     
     def add_new_documents(self, pdf_paths: List[str], chunk_size: int = 500, overlap: int = 50):
         """
@@ -192,16 +208,31 @@ class RAGPipeline:
         sources = []
         
         for i, doc in enumerate(top_reranked):
-            context_parts.append(f"From {doc['source']}:\n{doc['text']}")
+            # Handle different types of documents
+            if doc.get('type') == 'text':
+                context_parts.append(f"From {doc['source']}:\n{doc['text']}")
+            elif doc.get('type') == 'image':
+                context_parts.append(f"From {doc['source']} (Image):\n{doc.get('caption', 'Image from policy document')}")
+            else:
+                # Fallback for documents without type specified (backwards compatibility)
+                if 'text' in doc:
+                    context_parts.append(f"From {doc['source']}:\n{doc['text']}")
             
-            # Track unique sources
+            # Track unique sources with type information
             source_info = {
                 "filename": doc['filename'],
                 "page_number": doc['page_number'],
                 "source": doc['source'],
+                "type": doc.get('type', 'text'),
                 "similarity_score": round(similarity_scores[retrieved_chunks.index(doc)], 3),
                 "reranker_score": round(reranker_scores[i], 3) if i < len(reranker_scores) else 0.0
             }
+            
+            # Add image-specific data if it's an image
+            if doc.get('type') == 'image':
+                source_info['base64_data'] = doc.get('base64_data', '')
+                source_info['caption'] = doc.get('caption', 'Image from policy document')
+                source_info['dimensions'] = doc.get('dimensions', (0, 0))
             
             # Avoid duplicate sources
             if source_info not in sources:

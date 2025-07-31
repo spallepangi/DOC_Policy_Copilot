@@ -34,16 +34,18 @@ def log_evaluation_data(query: str, retrieved_chunks: list, reranked_chunks: lis
         "response": response,
         "retrieved_chunks": [
             {
-                "chunk_id": chunk["chunk_id"],
-                "source": chunk["source"],
-                "text": chunk["text"],
+                "chunk_id": chunk.get("chunk_id", f"{chunk.get('filename', 'unknown')}_{chunk.get('page_number', 0)}"),
+                "source": chunk.get("source", "Unknown source"),
+                "text": chunk.get("text", chunk.get("caption", "No text content")),
+                "type": chunk.get("type", "unknown"),
                 "initial_score": score
             } for chunk, score in zip(retrieved_chunks, similarity_scores)
         ],
         "reranked_chunks": [
             {
-                "chunk_id": chunk["chunk_id"],
-                "source": chunk["source"],
+                "chunk_id": chunk.get("chunk_id", f"{chunk.get('filename', 'unknown')}_{chunk.get('page_number', 0)}"),
+                "source": chunk.get("source", "Unknown source"),
+                "type": chunk.get("type", "unknown"),
                 "reranker_score": score
             } for chunk, score in zip(reranked_chunks, reranker_scores)
         ],
@@ -61,7 +63,10 @@ def check_for_hallucination(response: str, context_chunks: list) -> bool:
     response_tokens = set(response.lower().split())
     context_tokens = set()
     for chunk in context_chunks:
-        context_tokens.update(chunk["text"].lower().split())
+        # Handle both text and image documents
+        content = chunk.get("text", chunk.get("caption", ""))
+        if content:
+            context_tokens.update(content.lower().split())
 
     # Calculate the percentage of response tokens that are in the context
     if not context_tokens:

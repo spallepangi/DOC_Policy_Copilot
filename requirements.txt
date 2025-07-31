@@ -6,9 +6,17 @@ streamlit
 python-dotenv
 PyMuPDF
 google-generativeai
+cohere
 
 # Logging and evaluation
 loguru
 
 # Additional dependencies for enhanced features
 numpy
+Pillow
+
+# CLIP multimodal embeddings
+torch
+torchvision
+transformers
+sentence-transformers

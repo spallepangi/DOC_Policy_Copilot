@@ -3,16 +3,21 @@ import pickle
 import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple
-import cohere
+from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-class VectorStore:
-    def __init__(self, index_path: str = "index/faiss_index/"):
+class StableVectorStore:
+    """
+    FAISS vector store using SentenceTransformers for stable embeddings.
+    Supports text documents and images via caption embeddings.
+    """
+    
+    def __init__(self, index_path: str = "index/stable_faiss_index/"):
         """
-        Initialize the FAISS vector store with Cohere multimodal embeddings.
+        Initialize the FAISS vector store with SentenceTransformers embeddings.
         
         Args:
             index_path (str): Path to store the FAISS index
@@ -20,17 +25,17 @@ class VectorStore:
         self.index_path = index_path
         self.index = None
         self.documents = []
-        self.dimension = 1024  # Cohere embed-english-v3.0 dimension
         
-        # Initialize Cohere client
-        cohere_api_key = os.getenv('COHERE_API_KEY')
-        if not cohere_api_key:
-            raise ValueError("COHERE_API_KEY not found in environment variables")
-        self.cohere_client = cohere.Client(api_key=cohere_api_key)
+        # Initialize SentenceTransformers model
+        print("🔄 Loading SentenceTransformers model...")
+        self.model_name = "all-MiniLM-L6-v2"  # Fast and reliable
+        self.model = SentenceTransformer(self.model_name)
+        print(f"✅ SentenceTransformers model loaded: {self.model_name}")
         
-        # Model configuration for hybrid approach
-        self.text_model = 'embed-english-v3.0'  # For text embeddings
-        self.image_model = 'embed-english-v3.0-image'  # For image embeddings (when available)
+        # Get embedding dimension
+        dummy_embedding = self.model.encode(["test"])
+        self.dimension = dummy_embedding.shape[1]
+        print(f"✅ Embedding dimension: {self.dimension}")
         
         # Create index directory if it doesn't exist
         os.makedirs(index_path, exist_ok=True)
@@ -40,7 +45,7 @@ class VectorStore:
     
     def embed_text_chunk(self, text: str) -> np.ndarray:
         """
-        Generate embedding for a single text chunk using Cohere.
+        Generate embedding for a single text chunk using SentenceTransformers.
         
         Args:
             text (str): Text to embed
@@ -49,74 +54,32 @@ class VectorStore:
             np.ndarray: Text embedding
         """
         try:
-            response = self.cohere_client.embed(
-                model='embed-english-v3.0',
-                texts=[text],
-                input_type="search_document"
-            )
-            return np.array(response.embeddings[0], dtype=np.float32)
+            embedding = self.model.encode([text], normalize_embeddings=True)
+            return embedding[0].astype(np.float32)
         except Exception as e:
             print(f"Error generating text embedding: {str(e)}")
             return np.zeros(self.dimension, dtype=np.float32)
     
     def embed_image_chunk(self, base64_image: str, caption: str = None) -> np.ndarray:
         """
-        Generate embedding for a single image using Cohere.
-        Tries image model first, falls back to text embedding of caption.
+        Generate embedding for an image by using its caption.
         
         Args:
-            base64_image (str): Base64-encoded image
-            caption (str): Optional caption for fallback text embedding
+            base64_image (str): Base64-encoded image (not used, kept for compatibility)
+            caption (str): Caption to embed
             
         Returns:
-            np.ndarray: Image embedding
+            np.ndarray: Caption embedding
         """
-        # First try to use the actual image embedding model
-        try:
-            # Convert base64 to data URI format if not already
-            if not base64_image.startswith('data:'):
-                # Assume PNG format for now
-                image_data_uri = f'data:image/png;base64,{base64_image}'
-            else:
-                image_data_uri = base64_image
-            
-            response = self.cohere_client.embed(
-                model=self.image_model,
-                images=[image_data_uri]
-            )
-            print(f"✅ Successfully used image model for embedding (dim: {len(response.embeddings[0])})")
-            
-            # If image model returns different dimension, we need to handle this
-            embedding = np.array(response.embeddings[0], dtype=np.float32)
-            if len(embedding) != self.dimension:
-                print(f"⚠️ Image embedding dimension mismatch: {len(embedding)} != {self.dimension}")
-                # For now, pad or truncate to match text embedding dimension
-                if len(embedding) < self.dimension:
-                    embedding = np.pad(embedding, (0, self.dimension - len(embedding)))
-                else:
-                    embedding = embedding[:self.dimension]
-            
-            return embedding
-            
-        except Exception as e:
-            print(f"⚠️ Image model failed ({str(e)[:100]}...), falling back to text embedding")
-            
-            # Fallback: use text embedding of the image caption
-            try:
-                fallback_text = caption or "Image from policy document containing visual information"
-                response = self.cohere_client.embed(
-                    model=self.text_model,
-                    texts=[fallback_text],
-                    input_type="search_document"
-                )
-                return np.array(response.embeddings[0], dtype=np.float32)
-            except Exception as e2:
-                print(f"Error in fallback text embedding: {str(e2)}")
-                return np.zeros(self.dimension, dtype=np.float32)
+        # Use caption text embedding for images
+        if caption:
+            return self.embed_text_chunk(caption)
+        else:
+            return self.embed_text_chunk("Image from policy document")
     
     def generate_embeddings(self, documents: List[Dict[str, Any]]) -> np.ndarray:
         """
-        Generate embeddings for a list of documents using Cohere.
+        Generate embeddings for a list of documents.
         
         Args:
             documents (List[Dict[str, Any]]): List of documents with text or image data
@@ -126,25 +89,29 @@ class VectorStore:
         """
         embeddings = []
         
-        for doc in documents:
+        print(f"🔄 Generating embeddings for {len(documents)} documents...")
+        
+        for i, doc in enumerate(documents):
+            if i % 50 == 0:  # Progress indicator
+                print(f"   Progress: {i}/{len(documents)}")
+                
             if doc.get('type') == 'text':
                 embedding = self.embed_text_chunk(doc['text'])
             elif doc.get('type') == 'image':
-                # Try to use actual image embedding with base64 data
-                base64_data = doc.get('base64_data', '')
-                caption = doc.get('caption', 'Image from policy document containing visual information')
-                embedding = self.embed_image_chunk(base64_data, caption)
+                caption = doc.get('caption', 'Image from policy document')
+                embedding = self.embed_image_chunk('', caption)  # Don't process actual image
             else:
                 print(f"Unknown document type: {doc.get('type')}")
                 embedding = np.zeros(self.dimension, dtype=np.float32)
             
             embeddings.append(embedding)
         
+        print(f"✅ Generated {len(embeddings)} embeddings")
         return np.array(embeddings, dtype=np.float32)
     
     def generate_query_embedding(self, query: str) -> np.ndarray:
         """
-        Generate embedding for a query using Cohere.
+        Generate embedding for a query.
         
         Args:
             query (str): Query text
@@ -152,16 +119,8 @@ class VectorStore:
         Returns:
             np.ndarray: Query embedding
         """
-        try:
-            response = self.cohere_client.embed(
-                model='embed-english-v3.0',
-                texts=[query],
-                input_type="search_query"
-            )
-            return np.array([response.embeddings[0]], dtype=np.float32)
-        except Exception as e:
-            print(f"Error generating query embedding: {str(e)}")
-            return np.array([[0.0] * self.dimension], dtype=np.float32)
+        embedding = self.embed_text_chunk(query)
+        return np.array([embedding], dtype=np.float32)
     
     def create_index(self, documents: List[Dict[str, Any]]):
         """
@@ -174,16 +133,13 @@ class VectorStore:
             print("No documents to index.")
             return
         
-        print(f"Creating embeddings for {len(documents)} documents...")
+        print(f"Creating FAISS index for {len(documents)} documents...")
         
-        # Generate embeddings for all documents (text and images)
+        # Generate embeddings for all documents
         embeddings = self.generate_embeddings(documents)
         
-        # Create FAISS index
-        self.index = faiss.IndexFlatIP(self.dimension)  # Inner product for cosine similarity
-        
-        # Normalize embeddings for cosine similarity
-        faiss.normalize_L2(embeddings)
+        # Create FAISS index (Inner Product since embeddings are normalized)
+        self.index = faiss.IndexFlatIP(self.dimension)
         
         # Add embeddings to index
         self.index.add(embeddings)
@@ -191,7 +147,7 @@ class VectorStore:
         # Store documents metadata
         self.documents = documents
         
-        print(f"Created FAISS index with {self.index.ntotal} vectors.")
+        print(f"✅ Created FAISS index with {self.index.ntotal} vectors")
         
         # Save the index
         self.save_index()
@@ -211,9 +167,6 @@ class VectorStore:
         # Generate embeddings for new documents
         embeddings = self.generate_embeddings(new_documents)
         
-        # Normalize embeddings
-        faiss.normalize_L2(embeddings)
-        
         if self.index is None:
             # Create new index if none exists
             self.index = faiss.IndexFlatIP(self.dimension)
@@ -224,7 +177,7 @@ class VectorStore:
         # Add to documents list
         self.documents.extend(new_documents)
         
-        print(f"Index now contains {self.index.ntotal} vectors.")
+        print(f"✅ Index now contains {self.index.ntotal} vectors")
         
         # Save updated index
         self.save_index()
@@ -247,9 +200,6 @@ class VectorStore:
         # Generate query embedding
         query_embedding = self.generate_query_embedding(query)
         
-        # Normalize query embedding
-        faiss.normalize_L2(query_embedding)
-        
         # Search
         scores, indices = self.index.search(query_embedding, k)
         
@@ -271,7 +221,7 @@ class VectorStore:
             with open(os.path.join(self.index_path, "documents.pkl"), 'wb') as f:
                 pickle.dump(self.documents, f)
             
-            print(f"Index saved to {self.index_path}")
+            print(f"💾 Index saved to {self.index_path}")
     
     def load_index(self):
         """Load the FAISS index and documents from disk."""
@@ -287,7 +237,7 @@ class VectorStore:
                 with open(docs_file, 'rb') as f:
                     self.documents = pickle.load(f)
                 
-                print(f"Loaded existing index with {len(self.documents)} documents.")
+                print(f"📁 Loaded existing index with {len(self.documents)} documents")
                 return True
             except Exception as e:
                 print(f"Error loading index: {str(e)}")
@@ -301,17 +251,25 @@ class VectorStore:
                 "total_documents": 0, 
                 "total_chunks": 0,
                 "unique_files": 0,
-                "files": []
+                "files": [],
+                "model": "None"
             }
         
         # Count unique files
         unique_files = set()
+        text_count = sum(1 for doc in self.documents if doc.get('type') == 'text')
+        image_count = sum(1 for doc in self.documents if doc.get('type') == 'image')
+        
         for doc in self.documents:
             unique_files.add(doc['filename'])
         
         return {
             "total_documents": len(self.documents),
+            "text_documents": text_count,
+            "image_documents": image_count,
             "total_chunks": self.index.ntotal if self.index else 0,
             "unique_files": len(unique_files),
-            "files": list(unique_files)
+            "files": list(unique_files),
+            "model": self.model_name,
+            "dimension": self.dimension
         }

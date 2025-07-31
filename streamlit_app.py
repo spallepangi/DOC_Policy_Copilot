@@ -1,6 +1,9 @@
 import streamlit as st
 import os
 import time
+import base64
+import io
+from PIL import Image as PILImage
 from typing import List
 
 # Try to import with fallbacks
@@ -235,8 +238,8 @@ def main():
         if st.session_state.chat_history:
             st.markdown("## 💬 Conversation")
             
-            # Iterate through the history and display messages chronologically
-            for message in st.session_state.chat_history:
+            # Iterate through the history in reverse order (most recent first)
+            for message in reversed(st.session_state.chat_history):
                 if message.get('type') == 'user':
                     st.markdown(f"""
                     <div class="chat-message user-message">
@@ -263,6 +266,25 @@ def main():
                         <div>{answer}</div>
                     </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Display sources if available
+                    if isinstance(result, dict) and result.get('sources', []):
+                        st.markdown("### 📝 Related Sources:")
+                        for source in result['sources']:
+                            filename = source.get('filename', 'Unknown')
+                            page_number = source.get('page_number', 'Unknown')
+                            source_type = source.get('type', 'text')
+                            
+                            if source_type == 'text':
+                                st.markdown(f"- **{filename}** Page {page_number}: {source.get('source', '')}")
+                            elif source_type == 'image':
+                                try:
+                                    # Decode base64 image and display
+                                    image_data = base64.b64decode(source.get('base64_data', ''))
+                                    image = PILImage.open(io.BytesIO(image_data))
+                                    st.image(image, caption=f"{filename} Page {page_number} - {source.get('caption', 'Image')}", use_column_width=True)
+                                except Exception as e:
+                                    st.error(f"Error displaying image: {str(e)}")
     
     with col2:
         # Tips section
